@@ -44,6 +44,7 @@ void main(List<String> arguments) {
 
   print(
       'constexpr StenoMapDictionaryDefinition MainDictionary::definition = {');
+  print('  STENO_MAP_DICTIONARY_MAGIC,');
   print('  ${byStrokes.length},');
   print('  textBlock,');
   print('  strokes,');
@@ -79,7 +80,7 @@ void writeStrokeCount(
   // Build hashmap.
   final hashMap = List<HashEntry?>.filled(hashMapSize, null);
   map.forEach((key, value) {
-    final hashValue = chordHash(key);
+    final hashValue = key.crc32Hash();
     var index = hashValue % hashMapSize;
     while (hashMap[index] != null) {
       index = (index + 1) % hashMapSize;
@@ -90,20 +91,6 @@ void writeStrokeCount(
   print('const size_t hashMapSize$strokeCount = $hashMapSize;');
 
   writeData(strokeCount, hashMap, wordToOffsetMap);
-}
-
-int chordHash(Chords chords) {
-  final buffer = Uint8List(chords.chords.length * 4);
-  final byteData = ByteData.view(buffer.buffer);
-
-  var offset = 0;
-  for (final c in chords.chords) {
-    final mask = c.toMask();
-    byteData.setUint32(offset, mask, Endian.little);
-    offset += 4;
-  }
-
-  return Crc32().convert(buffer).toBigInt().toInt();
 }
 
 void writeData(

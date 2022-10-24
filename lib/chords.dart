@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:crclib/catalog.dart';
 
 class Chord {
   const Chord(this._chord);
@@ -47,6 +49,20 @@ class Chords {
   bool operator ==(Object other) {
     if (other is! Chords) return false;
     return chords.toString() == other.chords.toString();
+  }
+
+  int crc32Hash() {
+    final buffer = Uint8List(chords.length * 4);
+    final byteData = ByteData.view(buffer.buffer);
+
+    var offset = 0;
+    for (final c in chords) {
+      final mask = c.toMask();
+      byteData.setUint32(offset, mask, Endian.little);
+      offset += 4;
+    }
+
+    return Crc32().convert(buffer).toBigInt().toInt();
   }
 
   @override
