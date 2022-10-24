@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:crclib/catalog.dart';
 import 'package:plover_json_convert/chords.dart';
 import 'package:plover_json_convert/plover_json_convert.dart';
 
@@ -44,7 +43,7 @@ void main(List<String> arguments) {
 
   print(
       'constexpr StenoMapDictionaryDefinition MainDictionary::definition = {');
-  print('  STENO_MAP_DICTIONARY_MAGIC,');
+  print('  0x3244534a,'); // STENO_MAP_DICTIONARY_MAGIC
   print('  ${byStrokes.length},');
   print('  textBlock,');
   print('  strokes,');
@@ -65,14 +64,14 @@ void writeStrokeCount(
 ) {
   if (map.isEmpty) {
     print('const size_t hashMapSize$strokeCount = 0;');
-    print('const uint32_t *const data$strokeCount = nullptr;');
-    print('const uint32_t *const offsets$strokeCount = nullptr;');
+    print('const uint8_t *const data$strokeCount = nullptr;');
+    print('const StenoHashMapEntryBlock *const offsets$strokeCount = nullptr;');
     return;
   }
 
   // Target duty cycle of 66%.
   final minimumHashMapSize = map.length + (map.length >> 1);
-  var hashMapSize = 2;
+  var hashMapSize = 32;
   while (hashMapSize < minimumHashMapSize) {
     hashMapSize <<= 1;
   }
@@ -90,40 +89,67 @@ void writeStrokeCount(
 
   print('const size_t hashMapSize$strokeCount = $hashMapSize;');
 
-  writeData(strokeCount, hashMap, wordToOffsetMap);
+  writeData(strokeCount, hashMap, map, wordToOffsetMap);
+}
+
+extension UInt32ByteData on ByteData {
+  void setUint24(int dataOffset, int value) {
+    setUint8(dataOffset, value & 0xff);
+    setUint8(dataOffset + 1, (value >> 8) & 0xff);
+    setUint8(dataOffset + 2, (value >> 16) & 0xff);
+  }
 }
 
 void writeData(
   int strokeCount,
   List<HashEntry?> hashMap,
+  Map<Chords, String> dictionary,
   Map<String, int> wordToOffsetMap,
 ) {
-  final hashMapToOffset = <HashEntry, int>{};
+  final data = Uint8List(dictionary.length * 3 * (1 + strokeCount));
+  final dataView = ByteData.view(data.buffer);
 
-  print('const uint32_t data$strokeCount[] = {');
+  // Build data
   var offset = 1;
-
-  for (final entry in hashMap) {
-    if (entry == null) continue;
-
-    stdout.write('  ${wordToOffsetMap[entry.text]},');
-    for (var i = 0; i < strokeCount; ++i) {
-      stdout.write(' ${entry.chords.chords[i].toMask()},');
+  for (var i = 0; i < hashMap.length; ++i) {
+    final hashEntry = hashMap[i];
+    if (hashEntry == null) {
+      continue;
     }
-    print('');
-    hashMapToOffset[entry] = offset;
+    final chords = hashEntry.chords.chords;
+    final text = hashEntry.text;
+
+    final dataOffset = (offset - 1) * (1 + strokeCount) * 3;
+    dataView.setUint24(dataOffset, wordToOffsetMap[text]!);
+
+    for (var i = 0; i < strokeCount; ++i) {
+      dataView.setUint24(dataOffset + (i + 1) * 3, chords[i].toMask());
+    }
     ++offset;
   }
-  print('};');
 
-  print('const uint32_t offsets$strokeCount[] = {');
-  for (final entry in hashMap) {
-    if (entry == null) {
-      print('  0,');
-    } else {
-      print('  ${hashMapToOffset[entry]},');
+  writeUint8List('data$strokeCount', data);
+
+  // Build hashmap offsets.
+  final hashmapEntryCount = hashMap.length ~/ 32;
+
+  var startOffset = 1;
+  print('const StenoHashMapEntryBlock offsets$strokeCount[] = {');
+  for (var i = 0; i < hashmapEntryCount; ++i) {
+    var blockOffset = startOffset;
+    var blockMask = 0;
+    for (var j = 0; j < 32; ++j) {
+      final chords = hashMap[32 * i + j];
+      if (chords == null) {
+        continue;
+      }
+      blockMask |= (1 << j);
+      ++startOffset;
     }
+    final maskText = blockMask.toRadixString(16).padLeft(2, '8');
+    print('  { $blockOffset, 0x$maskText },');
   }
+
   print('};');
 }
 
@@ -150,13 +176,16 @@ Map<String, int> writeTextBlock(Map<Chords, String> map) {
     }
   }
 
-  final data = builder.toBytes();
-  stdout.write('const uint8_t textBlock[${data.length}] = {');
+  writeUint8List('textBlock', builder.toBytes());
+
+  return wordToOffsetMap;
+}
+
+void writeUint8List(String name, Uint8List data) {
+  stdout.write('const uint8_t $name[${data.length}] = {');
   for (var i = 0; i < data.length; ++i) {
     if (i % 16 == 0) stdout.write('\n ');
     stdout.write(' 0x${data[i].toRadixString(16).padLeft(2, '0')},');
   }
   stdout.write('\n};\n');
-
-  return wordToOffsetMap;
 }
