@@ -43,8 +43,10 @@ void main(List<String> arguments) {
 
   print(
       'constexpr StenoMapDictionaryDefinition MainDictionary::definition = {');
-  print('  0x3244534a,'); // STENO_MAP_DICTIONARY_MAGIC
+  print('  true,'); // Enabled
   print('  ${byStrokes.length},');
+  print('  0,'); // Padding
+  print('  "main.json",');
   print('  textBlock,');
   print('  strokes,');
   print('};');
@@ -71,7 +73,7 @@ void writeStrokeCount(
 
   // Target duty cycle of 66%.
   final minimumHashMapSize = map.length + (map.length >> 1);
-  var hashMapSize = 32;
+  var hashMapSize = 128;
   while (hashMapSize < minimumHashMapSize) {
     hashMapSize <<= 1;
   }
@@ -110,7 +112,7 @@ void writeData(
   final dataView = ByteData.view(data.buffer);
 
   // Build data
-  var offset = 1;
+  var offset = 0;
   for (var i = 0; i < hashMap.length; ++i) {
     final hashEntry = hashMap[i];
     if (hashEntry == null) {
@@ -119,7 +121,7 @@ void writeData(
     final chords = hashEntry.chords.chords;
     final text = hashEntry.text;
 
-    final dataOffset = (offset - 1) * (1 + strokeCount) * 3;
+    final dataOffset = offset * (1 + strokeCount) * 3;
     dataView.setUint24(dataOffset, wordToOffsetMap[text]!);
 
     for (var i = 0; i < strokeCount; ++i) {
@@ -131,23 +133,25 @@ void writeData(
   writeUint8List('data$strokeCount', data);
 
   // Build hashmap offsets.
-  final hashmapEntryCount = hashMap.length ~/ 32;
+  final hashmapEntryCount = hashMap.length ~/ 128;
 
-  var startOffset = 1;
+  var startOffset = 0;
   print('const StenoHashMapEntryBlock offsets$strokeCount[] = {');
   for (var i = 0; i < hashmapEntryCount; ++i) {
     var blockOffset = startOffset;
-    var blockMask = 0;
-    for (var j = 0; j < 32; ++j) {
-      final chords = hashMap[32 * i + j];
+    final blockMasks = [0, 0, 0, 0];
+    for (var j = 0; j < 128; ++j) {
+      final chords = hashMap[128 * i + j];
       if (chords == null) {
         continue;
       }
-      blockMask |= (1 << j);
+      final blockIndex = j ~/ 32;
+      blockMasks[blockIndex] |= (1 << (j & 31));
       ++startOffset;
     }
-    final maskText = blockMask.toRadixString(16).padLeft(2, '8');
-    print('  { $blockOffset, 0x$maskText },');
+    final maskTexts =
+        blockMasks.map((e) => '0x${e.toRadixString(16).padLeft(8, '0')}');
+    print('  { ${maskTexts.join(', ')}, $blockOffset },');
   }
 
   print('};');
